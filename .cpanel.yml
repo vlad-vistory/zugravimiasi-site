@@ -1,5 +1,5 @@
 ---
 deployment:
   tasks:
-    - export DEPLOYPATH=$HOME/public_html/
+    - export DEPLOYPATH=/home/zugravim/public_html/
     - /bin/cp -R *.html assets img 2026 contact.php robots.txt sitemap.xml .htaccess $DEPLOYPATH
