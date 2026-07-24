@@ -16,6 +16,15 @@ $mesaj = trim((string)($_POST['mesaj'] ?? ''));
 
 if ($nume === '' || $tel === '') { header('Location: /?err=1#contact'); exit; }
 
+// salveaza lead-ul in CRM (SQLite, in afara public_html); nu blocheaza formularul daca DB pica
+try {
+    require_once __DIR__ . '/_crm.php';
+    $db = crm_db();
+    $sursa = ($_POST['sursa'] ?? '') !== '' ? $clean($_POST['sursa']) : $clean($_SERVER['HTTP_REFERER'] ?? '');
+    $st = $db->prepare("INSERT INTO leads (created,nume,telefon,email,cand,deviz,mesaj,sursa,ip) VALUES (?,?,?,?,?,?,?,?,?)");
+    $st->execute([date('Y-m-d H:i:s'), $nume, $tel, $email, $cand, $deviz, $mesaj, $sursa, $_SERVER['REMOTE_ADDR'] ?? '']);
+} catch (Exception $e) { /* ignora erorile de DB */ }
+
 $subject = 'Cerere oferta de pe zugravimiasi.ro';
 $body  = "Nume: $nume\n";
 $body .= "Telefon: $tel\n";
