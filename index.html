@@ -353,7 +353,7 @@
       </div>
       <div class="faq-item">
         <button class="faq-q">Cât costă un deviz?<i class="fa-solid fa-chevron-down"></i></button>
-        <div class="faq-a"><p>O estimare la telefon sau cu calculatorul de pe site este gratuită. Pentru un deviz exact venim la o vizionare la fața locului, cu programare. Spre deosebire de multe firme de zugravit, noi îl facem detaliat, pe etape, de aceea vizita costă 200 lei, care se scad integral din prețul final al lucrării, dacă mergem mai departe împreună.</p></div>
+        <div class="faq-a"><p>O estimare la telefon sau cu calculatorul de pe site îți dă un preț orientativ, gratuit. Un deviz exact îți arată clar fiecare etapă, suprafețele, cantitățile de materiale și costurile. Spre deosebire de multe firme de zugravit, îl facem detaliat, la o vizionare la fața locului, cu programare, și costă 200 lei, care se scad integral din prețul final al lucrării.</p></div>
       </div>
       <div class="faq-item">
         <button class="faq-q">În ce zone din Iași lucrați?<i class="fa-solid fa-chevron-down"></i></button>
@@ -499,11 +499,27 @@
 
       <form class="ct-form rv" action="contact.php" method="post">
         <h3>Solicită ofertă</h3>
-        <p>Completează formularul și te sunăm noi în maxim 24 de ore.</p>
+        <p>O estimare îți dă un <strong>preț orientativ (gratuit)</strong>. Un deviz exact îți arată clar fiecare etapă, suprafețele, cantitățile de materiale și costurile. Te sunăm în maxim 24 de ore.</p>
         <div class="form-msg" id="formMsg" hidden></div>
         <div class="fg"><label for="nm">Nume</label><input id="nm" name="nume" type="text" required placeholder="Numele tău"></div>
         <div class="fg"><label for="ph">Telefon</label><input id="ph" name="telefon" type="tel" required placeholder="07xx xxx xxx"></div>
         <div class="fg"><label for="em">Email (opțional)</label><input id="em" name="email" type="email" placeholder="email@exemplu.ro"></div>
+        <div class="fg"><label for="cand">Când vrei să începi lucrarea?</label>
+          <select id="cand" name="cand">
+            <option value="">Alege...</option>
+            <option>Cât mai curând</option>
+            <option>În 1-2 săptămâni</option>
+            <option>În 1-2 luni</option>
+            <option>Peste 2 luni</option>
+            <option>Deocamdată mă informez</option>
+          </select>
+        </div>
+        <div class="fg"><label>Ce fel de deviz vrei?</label>
+          <div class="opts" style="margin-top:8px">
+            <label class="opt"><input type="radio" name="deviz" value="Deviz orientativ (gratuit)" checked><span class="opt-box"><b>Deviz orientativ (gratuit)</b><span>Preț estimativ, la telefon sau cu calculatorul de pe site.</span></span></label>
+            <label class="opt"><input type="radio" name="deviz" value="Deviz exact (cu plata, 200 lei)"><span class="opt-box"><b>Deviz exact (cu plată)</b><span>Vizionare la fața locului și deviz detaliat pe etape. 200 lei, se scad integral din lucrare.</span></span></label>
+          </div>
+        </div>
         <div class="fg"><label for="ms">Ce ai nevoie?</label><textarea id="ms" name="mesaj" placeholder="ex: zugrăvit apartament 2 camere în Tătărași, cu mici reparații"></textarea></div>
         <input type="text" name="website" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px" aria-hidden="true">
         <button class="btn btn-primary btn-lg" style="width:100%;justify-content:center">Trimite cererea</button>
@@ -791,7 +807,7 @@
       "name": "Cât costă un deviz?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "O estimare la telefon sau cu calculatorul de pe site este gratuită. Pentru un deviz exact venim la o vizionare la fața locului, cu programare. Spre deosebire de multe firme de zugravit, noi îl facem detaliat, pe etape, de aceea vizita costă 200 lei, care se scad integral din prețul final al lucrării, dacă mergem mai departe împreună."
+        "text": "O estimare la telefon sau cu calculatorul de pe site îți dă un preț orientativ, gratuit. Un deviz exact îți arată clar fiecare etapă, suprafețele, cantitățile de materiale și costurile. Spre deosebire de multe firme de zugravit, îl facem detaliat, la o vizionare la fața locului, cu programare, și costă 200 lei, care se scad integral din prețul final al lucrării."
       }
     },
     {

@@ -10,6 +10,8 @@ $clean = function ($s) { return trim(str_replace(array("\r", "\n"), ' ', (string
 $nume  = $clean($_POST['nume'] ?? '');
 $tel   = $clean($_POST['telefon'] ?? '');
 $email = $clean($_POST['email'] ?? '');
+$cand  = $clean($_POST['cand'] ?? '');
+$deviz = $clean($_POST['deviz'] ?? '');
 $mesaj = trim((string)($_POST['mesaj'] ?? ''));
 
 if ($nume === '' || $tel === '') { header('Location: /?err=1#contact'); exit; }
@@ -17,7 +19,9 @@ if ($nume === '' || $tel === '') { header('Location: /?err=1#contact'); exit; }
 $subject = 'Cerere oferta de pe zugravimiasi.ro';
 $body  = "Nume: $nume\n";
 $body .= "Telefon: $tel\n";
-$body .= 'Email: ' . ($email !== '' ? $email : '-') . "\n\n";
+$body .= 'Email: ' . ($email !== '' ? $email : '-') . "\n";
+$body .= 'Cand vrea lucrarea: ' . ($cand !== '' ? $cand : '-') . "\n";
+$body .= 'Tip deviz: ' . ($deviz !== '' ? $deviz : '-') . "\n\n";
 $body .= "Mesaj:\n" . ($mesaj !== '' ? $mesaj : '-') . "\n";
 
 $headers  = 'From: Zugrav Iasi <contact@zugravimiasi.ro>' . "\r\n";
