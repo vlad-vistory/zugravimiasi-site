@@ -2,4 +2,4 @@
 deployment:
   tasks:
     - export DEPLOYPATH=/home/zugravim/public_html/
-    - /bin/cp -R *.html assets img 2026 proiecte zugrav-urgent-iasi scoatem-mucegai-iasi zugravit-inainte-de-mutare-iasi reparatii-pereti-crapati-iasi zugravit-fara-mizerie-iasi contact.php track.php _crm.php crm robots.txt sitemap.xml .htaccess $DEPLOYPATH
+    - /bin/cp -R *.html assets img 2026 proiecte zugrav-urgent-iasi scoatem-mucegai-iasi zugravit-inainte-de-mutare-iasi reparatii-pereti-crapati-iasi zugravit-fara-mizerie-iasi renovare-casa-iasi amenajari-interioare-iasi renovare-bucatarie-iasi zugravit-garsoniera-iasi finisaje-interioare-iasi tencuiala-decorativa-iasi tencuieli-interioare-iasi renovare-apartament-vechi-iasi contact.php track.php _crm.php crm robots.txt sitemap.xml .htaccess $DEPLOYPATH
