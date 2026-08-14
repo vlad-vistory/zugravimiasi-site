@@ -26,6 +26,15 @@ function dz_inp($v) {
 }
 function dz_bani($v) { return number_format(round((float)$v, 2), 2, ',', '.'); }
 
+// unitatea materialului, dedusa din numele etapei (pentru afisarea in oferta)
+function dz_um_material($nume) {
+    $n = mb_strtolower($nume, 'UTF-8');
+    if (strpos($n, 'plas') !== false) return 'm²';
+    if (strpos($n, 'glet') !== false || strpos($n, 'tencuial') !== false) return 'kg';
+    if (strpos($n, 'amors') !== false || strpos($n, 'vopsea') !== false || strpos($n, 'lavabil') !== false) return 'l';
+    return '';
+}
+
 function dz_deviz($db, $id) {
     $q = $db->prepare("SELECT * FROM deviz WHERE id=?");
     $q->execute([(int)$id]);
@@ -453,8 +462,253 @@ dzPlasa(); dzCalc();
 
 $a = isset($_GET['a']) ? $_GET['a'] : 'lista';
 
-/* ---------------------------- PRINT ---------------------------- */
+/* ---------------------------- PRINT (ofertă A4, gata de salvat ca PDF) ---------------------------- */
 if ($a === 'print') {
+    $d = dz_deviz($db, (int)($_GET['id'] ?? 0));
+    if (!$d) { crm_head('deviz', 'Ofertă'); echo '<div class="empty">Devizul nu există.</div>'; crm_foot(); exit; }
+    $linii  = dz_linii($db, (int)$d['id']);
+    $tot    = deviz_totaluri($linii);
+    $m      = dz_masuratori($d);
+    $o      = dz_optiuni($d);
+    $txt    = dz_text_optiuni($o);
+    $grupuri = dz_grupuri($linii);
+    $luni = [1=>'ianuarie','februarie','martie','aprilie','mai','iunie','iulie','august','septembrie','octombrie','noiembrie','decembrie'];
+    $ts = strtotime($d['created']);
+    $data_ro = (int)date('j', $ts) . ' ' . $luni[(int)date('n', $ts)] . ' ' . date('Y', $ts);
+    $nume_fis = 'Deviz ' . (int)$d['numar'] . ($d['client_nume'] !== '' ? ' - ' . $d['client_nume'] : '');
+    ?>
+<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title><?php echo crm_h($nume_fis); ?></title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+@page { size: A4; margin: 14mm 0 16mm; }
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:#e9eaee;font-family:'Figtree',system-ui,-apple-system,'Segoe UI',Arial,sans-serif;color:#2b2b30;font-size:11.2px;line-height:1.5;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.bar{position:sticky;top:0;z-index:9;background:#18181b;color:#fff;padding:11px 18px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.bar a,.bar button{font:inherit;font-weight:700;border:0;border-radius:8px;padding:9px 15px;cursor:pointer;text-decoration:none}
+.bar .b1{background:#ec5e0c;color:#fff}.bar .b2{background:#2f2f36;color:#e7e7ea}
+.bar .hint{color:#a9adb5;font-size:.92em;font-weight:500}
+.sheet{width:210mm;min-height:297mm;margin:18px auto;background:#fff;padding:0 16mm;box-shadow:0 10px 40px rgba(0,0,0,.16);display:flex;flex-direction:column}
+.hd{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;padding-top:4mm}
+.logo{display:flex;align-items:center;gap:9px}
+.logo .mk{width:26px;height:26px;border-radius:7px;background:#f2681c;position:relative;flex:none}
+.logo .mk:after{content:'';position:absolute;left:6px;top:6px;width:14px;height:5px;background:#fff;border-radius:2px;box-shadow:0 7px 0 rgba(255,255,255,.65)}
+.logo b{font-family:'Archivo',sans-serif;font-size:16.5px;font-weight:800;letter-spacing:.02em;color:#18181b;text-transform:uppercase}
+.logo b i{color:#f2681c;font-style:normal}
+.hd-r{text-align:right}
+.hd-r h1{font-family:'Archivo',sans-serif;font-size:17px;font-weight:800;margin:0;color:#18181b}
+.hd-r .sub{color:#9ca3af;font-size:10.4px;margin-top:3px;letter-spacing:.02em}
+.rule{height:2px;background:#f2681c;margin:9px 0 0;opacity:.9}
+.rule.soft{background:#e4e4e8;height:1px}
+.boxes{display:flex;gap:14px;margin:16px 0 20px}
+.box{flex:1;background:#f4f5f7;border-left:3px solid #f2681c;padding:12px 14px;min-width:0}
+.box .lb{font-size:8.6px;letter-spacing:.14em;color:#8b8f98;font-weight:700;text-transform:uppercase;margin-bottom:6px}
+.box .nm{font-weight:800;color:#18181b;font-size:12.4px;margin-bottom:2px;word-break:break-word}
+.box .ln{color:#4b5563}
+h2.sec{font-family:'Archivo',sans-serif;font-size:12.6px;font-weight:800;color:#18181b;margin:0 0 8px}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
+.chip{background:#f4f5f7;border-radius:999px;padding:6px 13px;color:#6b7280;font-size:10.6px}
+.chip b{color:#18181b;font-size:11.4px;margin-left:4px}
+table.t{width:100%;border-collapse:collapse;margin-bottom:20px;page-break-inside:auto}
+table.t thead th{background:#2b2b33;color:#fff;font-family:'Archivo',sans-serif;font-weight:700;font-size:9px;letter-spacing:.1em;text-transform:uppercase;padding:11px 10px;text-align:right;white-space:nowrap}
+table.t thead th:first-child{text-align:left;font-size:11.6px;letter-spacing:.01em;text-transform:none;font-weight:800}
+table.t tbody td{padding:9px 10px;border-bottom:1px solid #eceef1;text-align:right;color:#6b7280;white-space:nowrap}
+table.t tbody td:first-child{text-align:left;color:#2b2b30;white-space:normal}
+table.t tbody tr:nth-child(even){background:#fafbfc}
+table.t tbody td.man{color:#18181b;font-weight:800}
+table.t tr{page-break-inside:avoid}
+table.t tfoot td{background:#fdf4ec;border-top:1.5px solid #f2681c;padding:11px 10px;text-align:right;font-weight:800;color:#18181b;white-space:nowrap}
+table.t tfoot td:first-child{text-align:left}
+table.t tfoot td .lb{color:#8b8f98;font-weight:700;font-size:9.4px}
+.recap{background:#26262c;border-radius:4px;padding:16px 18px;color:#fff;margin:0 0 22px}
+.recap table{width:100%;border-collapse:collapse}
+.recap th{font-size:8.8px;letter-spacing:.14em;text-transform:uppercase;color:#f2a06a;font-weight:700;text-align:right;padding-bottom:10px}
+.recap th:first-child{text-align:left}
+.recap td{padding:7px 0;text-align:right;font-size:12.4px}
+.recap td:first-child{text-align:left;color:#e7e7ea}
+.recap tr.sep td{border-top:1.5px solid #f2681c;padding-top:11px}
+.recap tr.big td{font-family:'Archivo',sans-serif;font-weight:800;font-size:14px}
+ul.li{margin:0 0 20px;padding:0;list-style:none}
+ul.li li{position:relative;padding-left:14px;margin-bottom:5px;color:#3f4450}
+ul.li li:before{content:'';position:absolute;left:0;top:6px;width:5px;height:5px;border-radius:50%;background:#f2681c}
+.fine{border-top:1px solid #e4e4e8;margin-top:26px;padding-top:12px}
+.fine p{color:#9ca3af;font-size:9.4px;margin:0 0 4px}
+.ft{text-align:center;color:#9ca3af;font-size:9.6px;padding:16px 0 6px;margin-top:auto}
+.ft-print{display:none}
+.pg2{page-break-before:always}
+.avoid{page-break-inside:avoid}
+@media print{
+  body{background:#fff}
+  .bar{display:none!important}
+  .sheet{width:auto;min-height:0;margin:0;padding:0 16mm;box-shadow:none;display:block}
+  .ft{display:none}
+  .ft-print{display:block;position:fixed;bottom:4mm;left:0;right:0;text-align:center;color:#9ca3af;font-size:9.2px}
+}
+</style>
+</head>
+<body>
+<div class="bar">
+  <a class="b2" href="/crm/deviz.php?a=edit&id=<?php echo (int)$d['id']; ?>">← Înapoi la deviz</a>
+  <button class="b1" onclick="window.print()">Salvează ca PDF</button>
+  <span class="hint">La „Destinație" alege <b>Salvează ca PDF</b>. Debifează „Antete și subsoluri" pentru un document curat.</span>
+</div>
+<?php
+    // antetul se repeta identic pe ambele pagini
+    $antet = function () use ($d, $data_ro) { ?>
+      <div class="hd">
+        <div class="logo"><span class="mk"></span><b>Zugrav <i>Iași</i></b></div>
+        <div class="hd-r">
+          <h1>Deviz ofertă de preț</h1>
+          <div class="sub">nr. <?php echo (int)$d['numar']; ?> &nbsp;·&nbsp; <?php echo crm_h($data_ro); ?></div>
+        </div>
+      </div>
+      <div class="rule"></div>
+    <?php };
+?>
+<div class="sheet">
+  <?php $antet(); ?>
+
+  <div class="boxes">
+    <div class="box">
+      <div class="lb">Beneficiar</div>
+      <div class="nm"><?php echo crm_h($d['client_nume'] !== '' ? $d['client_nume'] : 'Client'); ?></div>
+      <?php if ($d['client_telefon'] !== '') { ?><div class="ln"><?php echo crm_h($d['client_telefon']); ?></div><?php } ?>
+      <?php if ($d['adresa'] !== '') { ?><div class="ln"><?php echo crm_h($d['adresa']); ?></div><?php } ?>
+    </div>
+    <div class="box">
+      <div class="lb">Lucrarea</div>
+      <div class="nm"><?php echo crm_h($d['titlu'] !== '' ? $d['titlu'] : 'Lucrări de zugrăvit'); ?></div>
+      <div class="ln">Zugrav Iași · zugravimiasi.ro</div>
+    </div>
+  </div>
+
+  <h2 class="sec">Dimensiunile spațiului</h2>
+  <div class="chips">
+    <?php if ($m['pereti'] > 0) { ?><span class="chip">Pereți <b><?php echo crm_h(deviz_nr($m['pereti'])); ?> m²</b></span><?php } ?>
+    <?php if ($m['tavane'] > 0) { ?><span class="chip">Tavane <b><?php echo crm_h(deviz_nr($m['tavane'])); ?> m²</b></span><?php } ?>
+    <?php foreach ($m['camere'] as $c) {
+        if (($c['nume'] ?? '') === '' && !$c['l']) continue; ?>
+      <span class="chip"><?php echo crm_h($c['nume'] !== '' ? $c['nume'] : 'Cameră'); ?> <b><?php echo crm_h(deviz_nr($c['l'])); ?> × <?php echo crm_h(deviz_nr($c['w'])); ?> m</b></span>
+    <?php } ?>
+  </div>
+
+  <?php foreach ($grupuri as $grup => $ln) {
+      $gman = 0; $gmat = 0; ?>
+    <table class="t">
+      <thead>
+        <tr>
+          <th>Etape <?php echo crm_h(mb_strtolower($grup, 'UTF-8')); ?></th>
+          <th>Suprafață</th><th>Preț u.m.</th><th>Preț manoperă</th><th>Cant. mat.</th><th>Preț mat.</th>
+        </tr>
+      </thead>
+      <tbody>
+        <?php foreach ($ln as $l) {
+          $man = (float)$l['cantitate'] * (float)$l['pret_um'];
+          $mat = (float)$l['material_cant'] * (float)$l['material_pret'];
+          $gman += $man; $gmat += $mat; ?>
+          <tr>
+            <td><?php echo crm_h($l['nume']); ?></td>
+            <td><?php echo crm_h(deviz_nr($l['cantitate'])); ?> <?php echo $l['um'] === 'mp' ? 'm²' : crm_h($l['um']); ?></td>
+            <td><?php echo crm_h(deviz_nr($l['pret_um'])); ?></td>
+            <td class="man"><?php echo crm_h(number_format($man, 0, ',', '.')); ?> lei</td>
+            <td><?php echo $l['material_cant'] > 0 ? crm_h(deviz_nr($l['material_cant'])) . ' ' . crm_h(dz_um_material($l['nume'])) : '—'; ?></td>
+            <td><?php echo $mat > 0 ? crm_h(number_format($mat, 0, ',', '.')) . ' lei' : '—'; ?></td>
+          </tr>
+        <?php } ?>
+      </tbody>
+      <tfoot>
+        <tr>
+          <td>Total <?php echo crm_h(mb_strtolower($grup, 'UTF-8')); ?></td>
+          <td></td>
+          <td><span class="lb">Manoperă</span></td>
+          <td><?php echo crm_h(number_format($gman, 0, ',', '.')); ?> lei</td>
+          <td><span class="lb">Materiale</span></td>
+          <td><?php echo crm_h(number_format($gmat, 0, ',', '.')); ?> lei</td>
+        </tr>
+      </tfoot>
+    </table>
+  <?php } ?>
+
+  <div class="ft">Zugrav Iași · contact@zugravimiasi.ro · zugravimiasi.ro</div>
+</div>
+
+<div class="sheet pg2">
+  <?php $antet(); ?>
+
+  <div class="recap" style="margin-top:18px">
+    <table>
+      <thead><tr><th>Lucrarea</th><th>Manoperă</th><th>Materiale</th></tr></thead>
+      <tbody>
+        <?php foreach ($tot['grupuri'] as $g => $v) { ?>
+          <tr>
+            <td><?php echo crm_h('Etape ' . mb_strtolower($g, 'UTF-8')); ?></td>
+            <td><b><?php echo crm_h(number_format($v['manopera'], 0, ',', '.')); ?> lei</b></td>
+            <td><b><?php echo crm_h(number_format($v['material'], 0, ',', '.')); ?> lei</b></td>
+          </tr>
+        <?php } ?>
+        <tr class="sep big">
+          <td>Total</td>
+          <td><?php echo crm_h(number_format($tot['manopera'], 0, ',', '.')); ?> lei</td>
+          <td><?php echo crm_h(number_format($tot['material'], 0, ',', '.')); ?> lei</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="avoid">
+    <h2 class="sec">Servicii suplimentare, contra cost</h2>
+    <ul class="li">
+      <li>Cărat materiale sau moloz cu liftul – 45 lei | 100 kg</li>
+      <li>Cărat materiale sau moloz fără lift – 45 lei + 10 lei pe etaj | 100 kg</li>
+      <li>Transport materiale (până la 100 kg) – 150 lei</li>
+      <li>Transport materiale (peste 100 kg) – 200 lei</li>
+      <li>Timp alocat pentru cumpărarea materialelor – 80 lei | oră</li>
+      <li>Înfoliat, manipulat mobilier în interior – 80 lei | oră</li>
+    </ul>
+  </div>
+
+  <div class="avoid">
+    <h2 class="sec">Ce include oferta</h2>
+    <p style="margin:0 0 8px">Oferta include manoperă și materiale de bază (nu include materialele cu rol estetic).</p>
+    <ul class="li">
+      <li>Materialele cu rol estetic nu sunt incluse (ex.: gresie, faianță, parchet, plintă, uși, praguri, pervaze, obiecte sanitare).</li>
+      <li>Transportul și timpul alocat achiziției sunt incluse doar pentru materialele de bază; urcarea acestora în apartament se realizează contra cost.</li>
+      <li>Devizul nu include manopera și materialele pentru lucrările electrice și sanitare.</li>
+      <li>Etapele din deviz pot fi modificate, adăugate sau eliminate, în funcție de solicitările clientului.</li>
+      <li>Prețurile materialelor cu rol estetic nu sunt incluse, deoarece acestea se aleg în funcție de preferințele și bugetul fiecărui client, iar costurile pot varia semnificativ.</li>
+      <li>Costurile pentru manipularea mobilierului, transportul materialelor, evacuarea molozului, foliile de protecție și materialele aferente nu sunt incluse în deviz, deoarece cantitățile necesare nu pot fi estimate exact. Acestea se calculează săptămânal, pe baza consumului real.</li>
+      <li>Estimarea la telefon este gratuită. Devizul exact, măsurat la fața locului, costă 200 lei și se scad integral din prețul final al lucrării.</li>
+    </ul>
+  </div>
+
+  <div class="fine avoid">
+    <p>Garanție 12 luni pentru defectele apărute din vina prestatorului.</p>
+    <p>Prestatorul are obligația să execute fiecare etapă menționată în acest deviz.</p>
+    <p>Beneficiarul are obligația să verifice oferta și să se asigure că au fost adăugate toate etapele pe care le-a cerut.</p>
+    <p>Oferta de preț include doar etapele menționate mai sus; orice etapă suplimentară cerută de client se adaugă separat.</p>
+    <p>Oferta poate suferi modificări în funcție de evoluția lucrării: pot fi adăugate etape sau pot apărea modificări de preț în funcție de complexitate.</p>
+  </div>
+
+  <div class="ft">Zugrav Iași · contact@zugravimiasi.ro · zugravimiasi.ro</div>
+</div>
+<div class="ft-print">Zugrav Iași · contact@zugravimiasi.ro · zugravimiasi.ro</div>
+<script>document.title = <?php echo json_encode($nume_fis, JSON_UNESCAPED_UNICODE); ?>;</script>
+</body>
+</html>
+<?php
+    exit;
+}
+
+/* varianta veche, pastrata pentru referinta interna */
+if ($a === '__print_vechi') {
     $d = dz_deviz($db, (int)($_GET['id'] ?? 0));
     if (!$d) { crm_head('deviz', 'Ofertă'); echo '<div class="empty">Devizul nu există.</div>'; crm_foot(); exit; }
     $linii  = dz_linii($db, (int)$d['id']);
@@ -666,7 +920,7 @@ if ($a === 'edit') {
             <?php } ?>
           </select>
         </form>
-        <a class="btn ghost" href="/crm/deviz.php?a=print&id=<?php echo $id; ?>">Vezi ca ofertă</a>
+        <a class="btn" href="/crm/deviz.php?a=print&id=<?php echo $id; ?>" target="_blank">Ofertă PDF pentru client</a>
       </div>
     </div>
 
