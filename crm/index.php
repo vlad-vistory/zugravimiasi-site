@@ -33,8 +33,32 @@ if (isset($_GET['logout'])) { session_destroy(); header('Location: ?'); exit; }
 
 $ACUM = date('Y-m-d H:i:s');
 
+// tipurile de imobil folosite la lead-urile scrise de mana
+if (!defined('CRM_TIP_IMOBIL')) define('CRM_TIP_IMOBIL', ['Apartament', 'Casă', 'Spațiu comercial', 'Altul']);
+
 /* ================= ACTIUNI POST ================= */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+
+    // mutarea unui card pe tabla kanban; raspunde JSON, nu redirect
+    if (($_POST['act'] ?? '') === 'muta') {
+        header('Content-Type: application/json; charset=utf-8');
+        $mid = (int)($_POST['id'] ?? 0);
+        $ns  = (string)($_POST['status'] ?? '');
+        if (!$mid || !in_array($ns, CRM_STATUSES, true)) {
+            echo json_encode(['ok' => false, 'err' => 'Date greșite.'], JSON_UNESCAPED_UNICODE); exit;
+        }
+        $q = $db->prepare("SELECT * FROM leads WHERE id=? AND trashed=0"); $q->execute([$mid]);
+        $lead = $q->fetch(PDO::FETCH_ASSOC);
+        if (!$lead) { echo json_encode(['ok' => false, 'err' => 'Lead inexistent.'], JSON_UNESCAPED_UNICODE); exit; }
+        if ($ns !== (string)$lead['status']) {
+            $db->prepare("UPDATE leads SET status=? WHERE id=?")->execute([$ns, $mid]);
+            crm_note($db, $mid, 'Stare schimbată în „' . $ns . '”.');
+        }
+        if ($ns !== 'Nou' && trim((string)$lead['contacted_at']) === '') {
+            $db->prepare("UPDATE leads SET contacted_at=? WHERE id=?")->execute([$ACUM, $mid]);
+        }
+        echo json_encode(['ok' => true], JSON_UNESCAPED_UNICODE); exit;
+    }
 
     // parola noua, din Setari
     if (isset($_POST['setpass'])) {
@@ -47,19 +71,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // lead adaugat manual (venit pe telefon, recomandare, etc.)
     if (isset($_POST['lead_nou'])) {
-        $nume  = trim((string)($_POST['nume'] ?? ''));
-        $tel   = trim((string)($_POST['telefon'] ?? ''));
-        $email = trim((string)($_POST['email'] ?? ''));
-        $mesaj = trim((string)($_POST['mesaj'] ?? ''));
-        $snote = trim((string)($_POST['source_note'] ?? ''));
-        $sursa = (string)($_POST['sursa'] ?? '');
+        $nume   = trim((string)($_POST['nume'] ?? ''));
+        $tel    = trim((string)($_POST['telefon'] ?? ''));
+        $email  = trim((string)($_POST['email'] ?? ''));
+        $oras   = trim((string)($_POST['oras'] ?? ''));
+        $adresa = trim((string)($_POST['adresa'] ?? ''));
+        $mesaj  = trim((string)($_POST['mesaj'] ?? ''));
+        $snote  = trim((string)($_POST['source_note'] ?? ''));
+        $sursa  = (string)($_POST['sursa'] ?? '');
         if (!in_array($sursa, CRM_SURSE_OFFLINE, true)) $sursa = 'Altă sursă';
+        $tip = (string)($_POST['tip_imobil'] ?? '');
+        if ($tip !== '' && !in_array($tip, CRM_TIP_IMOBIL, true)) $tip = '';
+        $supr = preg_replace('/[^0-9]/', '', (string)($_POST['suprafata'] ?? ''));
+        if ($supr === '0') $supr = '';
+        $st = (string)($_POST['status'] ?? 'Nou');
+        if (!in_array($st, CRM_STATUSES, true)) $st = 'Nou';
         if ($nume === '' && $tel === '') { header('Location: ?p=nou&e=1'); exit; }
         $ins = $db->prepare("INSERT INTO leads
-            (created,session_id,nume,telefon,email,cand,deviz,mesaj,entry_page,submit_page,button,source,device,ip,status,value,trashed,channel,source_note,quote_price)
-            VALUES (?,'',?,?,?,'','',?,'','','',?,'','','Nou',0,0,'offline',?,0)");
-        $ins->execute([$ACUM, $nume, $tel, $email, $mesaj, $sursa, $snote]);
+            (created,session_id,nume,telefon,email,cand,deviz,mesaj,entry_page,submit_page,button,source,device,ip,status,value,trashed,channel,source_note,quote_price,oras,adresa,tip_imobil,suprafata)
+            VALUES (?,'',?,?,?,'','',?,'','','',?,'','',?,0,0,'offline',?,0,?,?,?,?)");
+        $ins->execute([$ACUM, $nume, $tel, $email, $mesaj, $sursa, $st, $snote, $oras, $adresa, $tip, $supr]);
         $nid = (int)$db->lastInsertId();
+        // daca il treci direct peste "Nou", momentul contactului e chiar acum
+        if ($st !== 'Nou') $db->prepare("UPDATE leads SET contacted_at=? WHERE id=?")->execute([$ACUM, $nid]);
         crm_note($db, $nid, 'Lead adăugat manual.');
         header('Location: ?p=lead&id=' . $nid); exit;
     }
@@ -77,6 +111,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $db->prepare("DELETE FROM leads WHERE id=?")->execute([$id]);
                 $db->prepare("DELETE FROM notes WHERE lead_id=?")->execute([$id]);
                 header('Location: ?p=cos'); exit;
+            }
+
+            // datele clientului, corectate de pe fisa
+            if (($_POST['act'] ?? '') === 'date_client') {
+                $tip = (string)($_POST['tip_imobil'] ?? '');
+                if ($tip !== '' && !in_array($tip, CRM_TIP_IMOBIL, true)) $tip = '';
+                $noi = [
+                    'nume'       => trim((string)($_POST['nume'] ?? '')),
+                    'telefon'    => trim((string)($_POST['telefon'] ?? '')),
+                    'email'      => trim((string)($_POST['email'] ?? '')),
+                    'oras'       => trim((string)($_POST['oras'] ?? '')),
+                    'adresa'     => trim((string)($_POST['adresa'] ?? '')),
+                    'tip_imobil' => $tip,
+                    'suprafata'  => trim((string)($_POST['suprafata'] ?? '')),
+                ];
+                $schimbat = false;
+                foreach ($noi as $k => $vv) if ($vv !== trim((string)($lead[$k] ?? ''))) $schimbat = true;
+                if ($schimbat) {
+                    $db->prepare("UPDATE leads SET nume=?,telefon=?,email=?,oras=?,adresa=?,tip_imobil=?,suprafata=? WHERE id=?")
+                       ->execute([$noi['nume'], $noi['telefon'], $noi['email'], $noi['oras'], $noi['adresa'], $noi['tip_imobil'], $noi['suprafata'], $id]);
+                    crm_note($db, $id, 'Datele clientului au fost actualizate.');
+                }
             }
 
             // stare
@@ -285,54 +341,244 @@ if ($p === 'panou') {
 /* ================= PALNIE ================= */
 elseif ($p === 'palnie') {
     $titlu = 'Pâlnie · CRM Zugrav Iași';
-    $f = $_GET['f'] ?? '';
+    $f = (string)($_GET['f'] ?? '');
+    if (!in_array($f, CRM_STATUSES, true)) $f = '';
+    $v = (($_GET['v'] ?? '') === 'lista') ? 'lista' : 'kanban';
+
     $cnt = [];
     foreach ($db->query("SELECT status,COUNT(*) c FROM leads WHERE trashed=0 GROUP BY status") as $r) $cnt[$r['status']] = (int)$r['c'];
     $tot = array_sum($cnt);
-
+    ?>
+<style>
+.kb{display:flex;gap:12px;align-items:flex-start;overflow-x:auto;padding-bottom:12px}
+.kbcol{flex:1 0 200px;min-width:200px;background:#eceef1;border:1px solid #e4e4e8;border-radius:14px;padding:10px}
+.kbcol.over{background:#fff7ed;border-color:#f2681c}
+.kbh{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:10px}
+.kbn{color:#6b7280;font-size:.76rem;font-weight:700;text-align:right;white-space:nowrap}
+.kbl{display:flex;flex-direction:column;gap:8px;min-height:80px}
+.kbc{display:block;background:#fff;border:1px solid #e4e4e8;border-left:4px solid #9ca3af;border-radius:10px;padding:10px 12px;cursor:grab}
+.kbc:active{cursor:grabbing}
+.kbc.drag{opacity:.35}
+.kbc.s-nou{border-left-color:#f2681c}.kbc.s-contactat{border-left-color:#3b82f6}.kbc.s-ofertat{border-left-color:#a855f7}.kbc.s-castigat{border-left-color:#16a34a}.kbc.s-pierdut{border-left-color:#9ca3af}
+.kbc .nm{font-size:.93rem}
+.kbv{display:block;color:#15803d;font-weight:800;font-size:.86rem;margin-top:5px}
+.kbt{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:6px;color:#9ca3af;font-size:.74rem}
+.kbch{background:#f3f4f6;color:#6b7280;border-radius:999px;padding:2px 8px;font-weight:700;white-space:nowrap}
+.kbempty{color:#9ca3af;font-size:.82rem;text-align:center;padding:14px 0}
+</style>
+    <?php
     echo '<div class="an-top"><div class="tabs" style="margin-bottom:0">';
-    echo '<a class="tab ' . ($f === '' ? 'on' : '') . '" href="?p=palnie">Toate <span>' . $tot . '</span></a>';
-    foreach (CRM_STATUSES as $s) echo '<a class="tab ' . ($f === $s ? 'on' : '') . '" href="?p=palnie&f=' . urlencode($s) . '">' . crm_h($s) . ' <span>' . (int)($cnt[$s] ?? 0) . '</span></a>';
+    echo '<a class="tab ' . ($v === 'kanban' ? 'on' : '') . '" href="?p=palnie&v=kanban">Kanban</a>';
+    echo '<a class="tab ' . ($v === 'lista' ? 'on' : '') . '" href="?p=palnie&v=lista' . ($f !== '' ? '&f=' . urlencode($f) : '') . '">Listă</a>';
     echo '</div><div style="display:flex;gap:8px"><a class="btn ghost sm" href="?export=csv">Descarcă CSV</a><a class="btn sm" href="?p=nou">+ Lead nou</a></div></div>';
 
-    if ($f && in_array($f, CRM_STATUSES, true)) {
-        $q = $db->prepare("SELECT * FROM leads WHERE trashed=0 AND status=? ORDER BY id DESC");
-        $q->execute([$f]);
-        $rows = $q->fetchAll(PDO::FETCH_ASSOC);
-    } else {
+    if ($v === 'kanban') {
         $rows = $db->query("SELECT * FROM leads WHERE trashed=0 ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC);
+        $col = [];
+        foreach (CRM_STATUSES as $s) $col[$s] = [];
+        foreach ($rows as $r) {
+            $s = (string)$r['status'];
+            if (!isset($col[$s])) $s = 'Nou';
+            $col[$s][] = $r;
+        }
+        echo '<p class="muted" style="margin:-4px 0 12px">Trage cardul dintr-o coloană în alta ca să schimbi etapa. Un clic pe card deschide fișa.</p>';
+        echo '<div class="kb">';
+        foreach (CRM_STATUSES as $s) {
+            $sl = crm_slug($s);
+            $suma = 0;
+            foreach ($col[$s] as $r) $suma += lead_val($r);
+            echo '<div class="kbcol" data-status="' . crm_h($s) . '" data-slug="' . crm_h($sl) . '">';
+            echo '<div class="kbh"><span class="badge s-' . $sl . '">' . crm_h($s) . '</span>';
+            echo '<span class="kbn">' . count($col[$s]) . ($suma > 0 ? ' · ' . crm_h(crm_lei($suma)) : '') . '</span></div>';
+            echo '<div class="kbl">';
+            foreach ($col[$s] as $r) {
+                $necitit = trim((string)$r['viewed_at']) === '';
+                $val = lead_val($r);
+                $loc = trim((string)$r['adresa']) !== '' ? trim((string)$r['adresa']) : trim((string)$r['oras']);
+                echo '<a class="kbc s-' . $sl . '" draggable="true" data-id="' . (int)$r['id'] . '" data-val="' . $val . '" href="?p=lead&id=' . (int)$r['id'] . '">';
+                echo '<div class="nm">' . ($necitit ? '<span class="dot"></span>' : '') . crm_h(nume_lead($r)) . '</div>';
+                if (trim((string)$r['nume']) !== '' && trim((string)$r['telefon']) !== '') echo '<div class="meta">' . crm_h($r['telefon']) . '</div>';
+                if ($loc !== '') echo '<div class="meta">' . crm_h(scurt($loc, 32)) . '</div>';
+                if ($val > 0) echo '<b class="kbv">' . crm_h(crm_lei($val)) . '</b>';
+                echo '<div class="kbt"><span>' . crm_h(crm_ago($r['created'])) . '</span>';
+                if (trim((string)$r['channel']) !== '') echo '<span class="kbch">' . crm_h($r['channel']) . '</span>';
+                echo '</div></a>';
+            }
+            echo '<div class="kbempty"' . ($col[$s] ? ' style="display:none"' : '') . '>Niciun lead</div>';
+            echo '</div></div>';
+        }
+        echo '</div>';
+        ?>
+<script>
+(function () {
+  var board = document.querySelector('.kb');
+  if (!board || !window.fetch) return;
+  var stari = ['s-nou', 's-contactat', 's-ofertat', 's-castigat', 's-pierdut'];
+  var card = null, colDe = null, palit = null;
+  var coloane = Array.prototype.slice.call(board.querySelectorAll('.kbcol'));
+
+  function vopseste(c, col) {
+    stari.forEach(function (x) { c.classList.remove(x); });
+    c.classList.add('s-' + col.getAttribute('data-slug'));
+  }
+  function bani(v) { return String(v).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ' lei'; }
+  function numara() {
+    coloane.forEach(function (col) {
+      var carduri = col.querySelectorAll('.kbc'), s = 0;
+      Array.prototype.forEach.call(carduri, function (c) { s += parseInt(c.getAttribute('data-val') || '0', 10) || 0; });
+      col.querySelector('.kbn').textContent = carduri.length + (s > 0 ? ' · ' + bani(s) : '');
+      col.querySelector('.kbempty').style.display = carduri.length ? 'none' : '';
+    });
+  }
+  function curata() {
+    coloane.forEach(function (col) { col.classList.remove('over'); });
+    if (palit) { clearTimeout(palit); palit = null; }
+    Array.prototype.forEach.call(board.querySelectorAll('.kbc.drag'), function (c) { c.classList.remove('drag'); });
+  }
+
+  board.addEventListener('dragstart', function (e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var c = t.closest('.kbc');
+    if (!c) return;
+    card = c; colDe = c.closest('.kbcol');
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', c.getAttribute('data-id')); } catch (err) {}
     }
-    if (!$rows) echo '<div class="empty">Niciun lead aici încă.</div>';
-    foreach ($rows as $r) {
-        $necitit = trim((string)$r['viewed_at']) === '';
-        $pret = (int)$r['quote_price'] > 0 ? (int)$r['quote_price'] : (int)$r['value'];
-        echo '<a class="lead s-' . crm_slug($r['status']) . ($necitit ? ' nou-necitit' : '') . '" href="?p=lead&id=' . (int)$r['id'] . '">';
-        echo '<div class="lead-l"><span class="badge s-' . crm_slug($r['status']) . '">' . crm_h($r['status']) . '</span><div>';
-        echo '<div class="nm">' . ($necitit ? '<span class="dot"></span>' : '') . crm_h($r['nume'] ?: '(fără nume)') . '</div>';
-        $sub = trim((string)$r['telefon']);
-        if (trim((string)$r['cand']) !== '') $sub .= ($sub !== '' ? ' · ' : '') . $r['cand'];
-        if (trim((string)$r['visit_at']) !== '') $sub .= ($sub !== '' ? ' · ' : '') . 'vizionare ' . data_ro($r['visit_at'], $r['visit_time']);
-        echo '<div class="meta">' . crm_h($sub) . '</div></div></div>';
-        echo '<div class="lead-r">' . ($pret > 0 ? '<b>' . crm_h(crm_lei($pret)) . '</b>' : '') . '<span class="rmeta">' . crm_h(de_unde($r)) . ' · ' . crm_h(crm_ago($r['created'])) . '</span></div></a>';
+    // pe frame-ul urmator, altfel browserul poza cardul deja palit
+    palit = setTimeout(function () { palit = null; c.classList.add('drag'); }, 0);
+  });
+  board.addEventListener('dragend', function () {
+    card = null; colDe = null; curata();
+  });
+
+  coloane.forEach(function (col) {
+    col.addEventListener('dragover', function (e) {
+      if (!card) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      if (col !== colDe) col.classList.add('over');
+    });
+    col.addEventListener('dragleave', function (e) {
+      if (!e.relatedTarget || !col.contains(e.relatedTarget)) col.classList.remove('over');
+    });
+    col.addEventListener('drop', function (e) {
+      e.preventDefault();
+      col.classList.remove('over');
+      if (!card || col === colDe) return;
+      var c = card, colVeche = colDe, urmatorul = c.nextSibling, lista = col.querySelector('.kbl');
+      curata();
+      lista.insertBefore(c, lista.firstChild);
+      vopseste(c, col);
+      numara();
+      var date = 'act=muta&id=' + encodeURIComponent(c.getAttribute('data-id')) +
+                 '&status=' + encodeURIComponent(col.getAttribute('data-status'));
+      fetch(location.pathname, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+        body: date
+      }).then(function (r) { return r.json(); }).then(function (j) {
+        if (!j || !j.ok) throw new Error('refuzat');
+      }).catch(function () {
+        colVeche.querySelector('.kbl').insertBefore(c, urmatorul);
+        vopseste(c, colVeche);
+        numara();
+        alert('Nu am putut muta lead-ul. Reîncarcă pagina și încearcă din nou.');
+      });
+    });
+  });
+})();
+</script>
+        <?php
+    } else {
+        echo '<div class="tabs">';
+        echo '<a class="tab ' . ($f === '' ? 'on' : '') . '" href="?p=palnie&v=lista">Toate <span>' . $tot . '</span></a>';
+        foreach (CRM_STATUSES as $s) echo '<a class="tab ' . ($f === $s ? 'on' : '') . '" href="?p=palnie&v=lista&f=' . urlencode($s) . '">' . crm_h($s) . ' <span>' . (int)($cnt[$s] ?? 0) . '</span></a>';
+        echo '</div>';
+
+        if ($f !== '') {
+            $q = $db->prepare("SELECT * FROM leads WHERE trashed=0 AND status=? ORDER BY id DESC");
+            $q->execute([$f]);
+            $rows = $q->fetchAll(PDO::FETCH_ASSOC);
+        } else {
+            $rows = $db->query("SELECT * FROM leads WHERE trashed=0 ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC);
+        }
+        if (!$rows) echo '<div class="empty">Niciun lead aici încă.</div>';
+        foreach ($rows as $r) {
+            $necitit = trim((string)$r['viewed_at']) === '';
+            $pret = lead_val($r);
+            echo '<a class="lead s-' . crm_slug($r['status']) . ($necitit ? ' nou-necitit' : '') . '" href="?p=lead&id=' . (int)$r['id'] . '">';
+            echo '<div class="lead-l"><span class="badge s-' . crm_slug($r['status']) . '">' . crm_h($r['status']) . '</span><div>';
+            echo '<div class="nm">' . ($necitit ? '<span class="dot"></span>' : '') . crm_h($r['nume'] ?: '(fără nume)') . '</div>';
+            $sub = trim((string)$r['telefon']);
+            if (trim((string)$r['oras']) !== '' || trim((string)$r['adresa']) !== '') {
+                $loc = trim((string)$r['adresa']) !== '' ? trim((string)$r['adresa']) : trim((string)$r['oras']);
+                $sub .= ($sub !== '' ? ' · ' : '') . scurt($loc, 32);
+            }
+            if (trim((string)$r['cand']) !== '') $sub .= ($sub !== '' ? ' · ' : '') . $r['cand'];
+            if (trim((string)$r['visit_at']) !== '') $sub .= ($sub !== '' ? ' · ' : '') . 'vizionare ' . data_ro($r['visit_at'], $r['visit_time']);
+            echo '<div class="meta">' . crm_h($sub) . '</div></div></div>';
+            echo '<div class="lead-r">' . ($pret > 0 ? '<b>' . crm_h(crm_lei($pret)) . '</b>' : '') . '<span class="rmeta">' . crm_h(de_unde($r)) . ' · ' . crm_h(crm_ago($r['created'])) . '</span></div></a>';
+        }
     }
 }
 
 /* ================= LEAD NOU (manual) ================= */
 elseif ($p === 'nou') {
     $titlu = 'Lead nou · CRM Zugrav Iași';
+    // campurile se pot precompleta din link: ?p=nou&telefon=07...&adresa=...&oras=Iași
+    $pre = function ($k, $def = '') {
+        $val = trim((string)($_GET[$k] ?? ''));
+        return $val !== '' ? $val : $def;
+    };
+    $g_sursa = $pre('sursa');
+    if (!in_array($g_sursa, CRM_SURSE_OFFLINE, true)) $g_sursa = '';
+    $g_tip = $pre('tip_imobil');
+    if (!in_array($g_tip, CRM_TIP_IMOBIL, true)) $g_tip = '';
+    $g_status = $pre('status');
+    if (!in_array($g_status, CRM_STATUSES, true)) $g_status = 'Nou';
+    $g_supr = preg_replace('/[^0-9]/', '', $pre('suprafata'));
+
     echo '<a class="back" href="?p=palnie">← Înapoi la pâlnie</a>';
     if (isset($_GET['e'])) echo '<div class="msg warn">Scrie măcar numele sau numărul de telefon.</div>';
-    echo '<div class="card" style="max-width:560px"><h3>Lead nou</h3>';
+    echo '<div class="card" style="max-width:700px"><h3>Lead nou</h3>';
     echo '<p class="muted" style="margin-top:-8px">Pentru cererile care nu vin de pe site: telefon, recomandare, mesaj pe Facebook.</p>';
     echo '<form method="post"><input type="hidden" name="lead_nou" value="1">';
-    echo '<label class="fl">Nume</label><input type="text" name="nume" autofocus>';
-    echo '<label class="fl">Telefon</label><input type="text" name="telefon">';
-    echo '<label class="fl">Email</label><input type="email" name="email">';
-    echo '<label class="fl">Ce vrea</label><textarea name="mesaj" style="min-height:90px" placeholder="Apartament 2 camere, zugrăvit complet, vrea în septembrie."></textarea>';
-    echo '<label class="fl">De unde a venit</label><select name="sursa">';
-    foreach (CRM_SURSE_OFFLINE as $s) echo '<option>' . crm_h($s) . '</option>';
+
+    echo '<div class="grid2">';
+    echo '<div><label class="fl">Nume</label><input type="text" name="nume" autofocus value="' . crm_h($pre('nume')) . '" placeholder="Ion Popescu"></div>';
+    echo '<div><label class="fl">Telefon</label><input type="text" name="telefon" value="' . crm_h($pre('telefon')) . '" placeholder="0740 123 456"></div>';
+    echo '</div>';
+
+    echo '<div class="grid2">';
+    echo '<div><label class="fl">Email</label><input type="email" name="email" value="' . crm_h($pre('email')) . '"></div>';
+    echo '<div><label class="fl">Oraș</label><input type="text" name="oras" value="' . crm_h($pre('oras', 'Iași')) . '"></div>';
+    echo '</div>';
+
+    echo '<label class="fl">Adresă</label><input type="text" name="adresa" value="' . crm_h($pre('adresa')) . '" placeholder="Str. Tabacului nr. 12, bl. B2, ap. 7">';
+
+    echo '<div class="grid2">';
+    echo '<div><label class="fl">Tip imobil</label><select name="tip_imobil"><option value="">(nespecificat)</option>';
+    foreach (CRM_TIP_IMOBIL as $t) echo '<option' . ($g_tip === $t ? ' selected' : '') . '>' . crm_h($t) . '</option>';
+    echo '</select></div>';
+    echo '<div><label class="fl">Suprafață</label><div class="inline"><input type="number" name="suprafata" min="0" step="1" value="' . crm_h($g_supr) . '"><span>mp</span></div></div>';
+    echo '</div>';
+
+    echo '<label class="fl">Ce lucrare dorește</label><textarea name="mesaj" style="min-height:90px" placeholder="Apartament 2 camere, zugrăvit complet, vrea în septembrie.">' . crm_h($pre('mesaj')) . '</textarea>';
+
+    echo '<div class="grid2">';
+    echo '<div><label class="fl">De unde a venit</label><select name="sursa">';
+    foreach (CRM_SURSE_OFFLINE as $s) echo '<option' . ($g_sursa === $s ? ' selected' : '') . '>' . crm_h($s) . '</option>';
+    echo '</select></div>';
+    echo '<div><label class="fl">Notă despre sursă</label><input type="text" name="source_note" value="' . crm_h($pre('nota')) . '" placeholder="Recomandat de Ion Popescu"></div>';
+    echo '</div>';
+
+    echo '<label class="fl">Etapă</label><select name="status">';
+    foreach (CRM_STATUSES as $s) echo '<option' . ($g_status === $s ? ' selected' : '') . '>' . crm_h($s) . '</option>';
     echo '</select>';
-    echo '<label class="fl">Notă despre sursă</label><input type="text" name="source_note" placeholder="Recomandat de Ion Popescu">';
+
     echo '<button class="btn full">Salvează lead-ul</button></form></div>';
 }
 
@@ -378,16 +624,52 @@ elseif ($p === 'lead') {
         echo '<div class="grid2"><div>';
 
         // ---- contact ----
+        ?>
+<style>
+.edt{margin-top:16px;border-top:1px solid #eef0f2;padding-top:12px}
+.edt>summary{cursor:pointer;font-weight:700;font-size:.88rem;color:#ec5e0c;list-style:none}
+.edt>summary::-webkit-details-marker{display:none}
+.edt>summary:before{content:'▸ '}
+.edt[open]>summary:before{content:'▾ '}
+.harta{margin-left:8px;color:#ec5e0c;font-weight:600;font-size:.85rem;white-space:nowrap}
+</style>
+        <?php
         echo '<div class="card"><h3>Contact</h3><table class="kv">';
         rnd('Telefon', '<b>' . crm_h($r['telefon'] ?: 'nu a lăsat număr') . '</b>');
         if (trim((string)$r['email']) !== '') rnd('Email', '<a href="mailto:' . crm_h($r['email']) . '">' . crm_h($r['email']) . '</a>');
+        if (trim((string)$r['oras']) !== '') rnd('Oraș', crm_h($r['oras']));
+        if (trim((string)$r['adresa']) !== '') {
+            $cauta = trim((string)$r['adresa']) . (trim((string)$r['oras']) !== '' ? ', ' . trim((string)$r['oras']) : '');
+            rnd('Adresă', crm_h($r['adresa']) . '<a class="harta" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&amp;query=' . crm_h(rawurlencode($cauta)) . '">Vezi pe hartă ↗</a>');
+        }
+        if (trim((string)$r['tip_imobil']) !== '') rnd('Tip imobil', crm_h($r['tip_imobil']));
         if (trim((string)$r['cand']) !== '') rnd('Când vrea lucrarea', crm_h($r['cand']));
-        if (trim((string)$r['suprafata']) !== '') rnd('Suprafață', crm_h($r['suprafata']));
+        if (trim((string)$r['suprafata']) !== '') rnd('Suprafață', crm_h(supraf_txt($r['suprafata'])));
         if (trim((string)$r['deviz']) !== '') rnd('Deviz cerut', crm_h($r['deviz']));
         if (trim((string)$r['mesaj']) !== '') rnd('Detalii', nl2br(crm_h($r['mesaj'])));
         rnd('Primit', crm_h(date('d.m.Y H:i', strtotime($r['created']))) . ' (' . crm_h(crm_ago($r['created'])) . ')');
         if (trim((string)$r['contacted_at']) !== '') rnd('Luat în lucru', crm_h(date('d.m.Y H:i', strtotime($r['contacted_at']))));
-        echo '</table></div>';
+        echo '</table>';
+
+        // corectarea datelor clientului, direct de pe fisa
+        echo '<details class="edt"><summary>Editează datele clientului</summary>';
+        echo '<form method="post"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="act" value="date_client">';
+        echo '<div class="grid2">';
+        echo '<div><label class="fl">Nume</label><input type="text" name="nume" value="' . crm_h($r['nume']) . '"></div>';
+        echo '<div><label class="fl">Telefon</label><input type="text" name="telefon" value="' . crm_h($r['telefon']) . '"></div>';
+        echo '</div><div class="grid2">';
+        echo '<div><label class="fl">Email</label><input type="email" name="email" value="' . crm_h($r['email']) . '"></div>';
+        echo '<div><label class="fl">Oraș</label><input type="text" name="oras" value="' . crm_h($r['oras']) . '"></div>';
+        echo '</div>';
+        echo '<label class="fl">Adresă</label><input type="text" name="adresa" value="' . crm_h($r['adresa']) . '">';
+        echo '<div class="grid2">';
+        echo '<div><label class="fl">Tip imobil</label><select name="tip_imobil"><option value="">(nespecificat)</option>';
+        foreach (CRM_TIP_IMOBIL as $t) echo '<option' . ((string)$r['tip_imobil'] === $t ? ' selected' : '') . '>' . crm_h($t) . '</option>';
+        echo '</select></div>';
+        echo '<div><label class="fl">Suprafață</label><div class="inline"><input type="text" name="suprafata" value="' . crm_h($r['suprafata']) . '"><span>mp</span></div></div>';
+        echo '</div>';
+        echo '<button class="btn full">Salvează datele</button></form></details>';
+        echo '</div>';
 
         // ---- urmarire ----
         echo '<div class="card"><h3>Urmărire</h3><form method="post"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="followup" value="1">';
@@ -510,6 +792,20 @@ function nume_lead($r) {
     if (trim((string)$r['nume']) !== '') return trim((string)$r['nume']);
     if (trim((string)$r['telefon']) !== '') return trim((string)$r['telefon']);
     return '(fără nume)';
+}
+// valoarea cu care intra lead-ul in sumele de pe coloane: pretul devizului, daca exista
+function lead_val($r) {
+    $q = (int)($r['quote_price'] ?? 0);
+    return $q > 0 ? $q : (int)($r['value'] ?? 0);
+}
+function scurt($s, $n) {
+    $s = trim((string)$s);
+    return mb_strlen($s, 'UTF-8') > $n ? mb_substr($s, 0, $n - 1, 'UTF-8') . '…' : $s;
+}
+function supraf_txt($v) {
+    $v = trim((string)$v);
+    if ($v === '') return '';
+    return preg_match('/^\d+([.,]\d+)?$/', $v) ? $v . ' mp' : $v;
 }
 function de_unde($r) {
     if (trim((string)$r['entry_page']) !== '') return $r['entry_page'];

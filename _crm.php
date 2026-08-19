@@ -36,7 +36,10 @@ function crm_db() {
         'contacted_at TEXT',       // cand a iesit prima data din "Nou" (viteza de reactie)
         'viewed_at TEXT',          // cand a fost deschisa prima data fisa (necitit)
         'quote_price INTEGER NOT NULL DEFAULT 0', // totalul devizului, sincronizat automat
-        'suprafata TEXT'           // suprafata declarata in formular, daca exista
+        'suprafata TEXT',          // suprafata declarata in formular, daca exista
+        'oras TEXT',               // orasul clientului
+        'adresa TEXT',             // adresa lucrarii
+        'tip_imobil TEXT'          // Apartament / Casa / Spatiu comercial
     ] as $col) {
         try { $db->exec("ALTER TABLE leads ADD COLUMN $col"); } catch (Exception $e) {}
     }

@@ -8,6 +8,11 @@ $db = crm_db();
 const DEVIZ_STARI    = ['ciornă', 'trimis', 'acceptat', 'refuzat'];
 const DEVIZ_UM       = ['mp', 'ml', 'buc'];
 const DEVIZ_GRUPURI  = ['Pereți', 'Tavane'];
+// cheile din blocul de optiuni, in ordinea in care apar in formular
+const DZ_OPT_BIFE    = ['tapet', 'decopertare', 'tencuiala', 'plasa', 'reparatii', 'tavan_decopertare'];
+const DZ_OPT_LISTE   = ['glet', 'straturi', 'culori', 'tavan_glet', 'tavan_straturi'];
+
+dz_tabele($db);
 
 /* ============================ helperi ============================ */
 
@@ -61,6 +66,57 @@ function dz_masuratori($d) {
 }
 function dz_optiuni($d) {
     return array_merge(deviz_optiuni_implicite(), ['tavan_decopertare' => 0], dz_json($d['optiuni'] ?? ''));
+}
+
+/* ---- sabloane de lucrare si etape proprii ---- */
+
+// aduce un set de optiuni la forma curata, cu toate cheile si valori valide
+function dz_optiuni_norm($o) {
+    $x = array_merge(deviz_optiuni_implicite(), ['tavan_decopertare' => 0], is_array($o) ? $o : []);
+    $out = [];
+    foreach (DZ_OPT_BIFE as $k) $out[$k] = empty($x[$k]) ? 0 : 1;
+    $out['glet']           = max(0, min(2, (int)($x['glet'] ?? 0)));
+    $out['straturi']       = max(0, min(2, (int)($x['straturi'] ?? 0)));
+    $out['culori']         = ((int)($x['culori'] ?? 1)) >= 2 ? 2 : 1;
+    $out['tavan_glet']     = max(0, min(2, (int)($x['tavan_glet'] ?? 0)));
+    $out['tavan_straturi'] = max(0, min(2, (int)($x['tavan_straturi'] ?? 0)));
+    if (!$out['tencuiala']) $out['plasa'] = 0;
+    return $out;
+}
+
+function dz_tabele($db) {
+    $db->exec("CREATE TABLE IF NOT EXISTS deviz_preset (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, nume TEXT, optiuni TEXT, created TEXT
+    )");
+    $db->exec("CREATE TABLE IF NOT EXISTS deviz_etapa_custom (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, grup TEXT, nume TEXT, um TEXT,
+        pret REAL, material_pret REAL, created TEXT
+    )");
+    // la prima rulare punem trei sabloane cu care se lucreaza cel mai des
+    if ((int)$db->query("SELECT COUNT(*) FROM deviz_preset")->fetchColumn() > 0) return;
+    $start = [
+        ['Reîmprospătare',      ['reparatii' => 1, 'glet' => 0, 'straturi' => 2, 'culori' => 1, 'tavan_glet' => 0, 'tavan_straturi' => 2]],
+        ['Standard cu glet',    ['reparatii' => 1, 'glet' => 2, 'straturi' => 2, 'culori' => 1, 'tavan_glet' => 2, 'tavan_straturi' => 2]],
+        ['Apartament cu tapet', ['tapet' => 1, 'reparatii' => 1, 'glet' => 2, 'straturi' => 2, 'culori' => 1, 'tavan_glet' => 2, 'tavan_straturi' => 2]],
+    ];
+    $st = $db->prepare("INSERT INTO deviz_preset (nume,optiuni,created) VALUES (?,?,?)");
+    $now = date('Y-m-d H:i:s');
+    foreach ($start as $s) {
+        $st->execute([$s[0], json_encode(dz_optiuni_norm($s[1]), JSON_UNESCAPED_UNICODE), $now]);
+    }
+}
+
+function dz_sabloane($db) {
+    return $db->query("SELECT id, nume, optiuni FROM deviz_preset ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
+}
+// datele pe care le citeste JavaScript-ul ca sa completeze formularul
+function dz_sabloane_map($sabloane) {
+    $map = [];
+    foreach ($sabloane as $s) $map[(int)$s['id']] = dz_optiuni_norm(dz_json($s['optiuni']));
+    return $map;
+}
+function dz_etape_proprii($db) {
+    return $db->query("SELECT * FROM deviz_etapa_custom ORDER BY grup, nume")->fetchAll(PDO::FETCH_ASSOC);
 }
 function dz_grupuri($linii) {
     $byg = [];
@@ -168,6 +224,31 @@ function dz_text_optiuni($o) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $act = isset($_POST['act']) ? $_POST['act'] : '';
     $id  = (int)($_POST['id'] ?? 0);
+
+    // sabloanele si etapele proprii nu tin de un deviz anume
+    if ($act === 'preset_del') {
+        $db->prepare("DELETE FROM deviz_preset WHERE id=?")->execute([(int)($_POST['pid'] ?? 0)]);
+        header('Location: /crm/deviz.php?a=sabloane&ok=sters');
+        exit;
+    }
+
+    if ($act === 'etape') {
+        if (!empty($_POST['sterge_etapa'])) {
+            $db->prepare("DELETE FROM deviz_etapa_custom WHERE id=?")->execute([(int)$_POST['sterge_etapa']]);
+            header('Location: /crm/deviz.php?a=etape&ok=stersa');
+            exit;
+        }
+        $pret = (isset($_POST['e_pret']) && is_array($_POST['e_pret'])) ? $_POST['e_pret'] : [];
+        $mat  = (isset($_POST['e_mat']) && is_array($_POST['e_mat'])) ? $_POST['e_mat'] : [];
+        $st = $db->prepare("UPDATE deviz_etapa_custom SET pret=?, material_pret=? WHERE id=?");
+        foreach ($pret as $eid => $v) {
+            $eid = (int)$eid;
+            if ($eid <= 0) continue;
+            $st->execute([dz_num($v), dz_num(isset($mat[$eid]) ? $mat[$eid] : 0), $eid]);
+        }
+        header('Location: /crm/deviz.php?a=etape&ok=salvat');
+        exit;
+    }
 
     if ($act === 'creaza') {
         $m = dz_post_masuratori();
@@ -279,15 +360,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($grup === '') $grup = 'Alte lucrări';
             $um = (string)($_POST['m_um'] ?? 'mp');
             if (!in_array($um, DEVIZ_UM, true)) $um = 'mp';
+            $pret = dz_num($_POST['m_pret'] ?? 0);
             $q = $db->prepare("SELECT COUNT(*) FROM deviz_linii WHERE deviz_id=? AND manual=1");
             $q->execute([$id]);
             $poz = 1000 + (int)$q->fetchColumn();
             $db->prepare("INSERT INTO deviz_linii (deviz_id,grup,nume,um,cantitate,pret_um,material_cant,material_pret,pozitie,manual) VALUES (?,?,?,?,?,?,0,0,?,1)")
-               ->execute([$id, $grup, $nume, $um, dz_num($_POST['m_cant'] ?? 0), dz_num($_POST['m_pret'] ?? 0), $poz]);
+               ->execute([$id, $grup, $nume, $um, dz_num($_POST['m_cant'] ?? 0), $pret, $poz]);
+            dz_touch($db, $id);
+            dz_sync_lead($db, $id);
+            // aceeasi etapa, tinuta minte pentru devizele urmatoare
+            if (!empty($_POST['m_save'])) {
+                $ex = $db->prepare("SELECT id FROM deviz_etapa_custom WHERE nume=? AND grup=?");
+                $ex->execute([$nume, $grup]);
+                $eid = (int)$ex->fetchColumn();
+                if ($eid > 0) {
+                    $db->prepare("UPDATE deviz_etapa_custom SET um=?, pret=? WHERE id=?")->execute([$um, $pret, $eid]);
+                } else {
+                    $db->prepare("INSERT INTO deviz_etapa_custom (grup,nume,um,pret,material_pret,created) VALUES (?,?,?,?,0,?)")
+                       ->execute([$grup, $nume, $um, $pret, date('Y-m-d H:i:s')]);
+                }
+            }
+        }
+        header('Location: /crm/deviz.php?a=edit&id=' . $id . '&ok=adaugat');
+        exit;
+    }
+
+    if ($act === 'adauga_custom') {
+        $q = $db->prepare("SELECT * FROM deviz_etapa_custom WHERE id=?");
+        $q->execute([(int)($_POST['etapa_id'] ?? 0)]);
+        $e = $q->fetch(PDO::FETCH_ASSOC);
+        if ($e) {
+            $c  = dz_num($_POST['e_cant'] ?? 0);
+            $mp = (float)$e['material_pret'];
+            $um = in_array((string)$e['um'], DEVIZ_UM, true) ? (string)$e['um'] : 'mp';
+            $q2 = $db->prepare("SELECT COUNT(*) FROM deviz_linii WHERE deviz_id=? AND manual=1");
+            $q2->execute([$id]);
+            $poz = 1000 + (int)$q2->fetchColumn();
+            $db->prepare("INSERT INTO deviz_linii (deviz_id,grup,nume,um,cantitate,pret_um,material_cant,material_pret,pozitie,manual) VALUES (?,?,?,?,?,?,?,?,?,1)")
+               ->execute([$id, $e['grup'], $e['nume'], $um, $c, (float)$e['pret'], $mp > 0 ? $c : 0, $mp, $poz]);
             dz_touch($db, $id);
             dz_sync_lead($db, $id);
         }
         header('Location: /crm/deviz.php?a=edit&id=' . $id . '&ok=adaugat');
+        exit;
+    }
+
+    if ($act === 'preset_save') {
+        $nume = trim((string)($_POST['sablon_nume'] ?? ''));
+        if ($nume === '') $nume = 'Șablon fără nume';
+        $db->prepare("INSERT INTO deviz_preset (nume,optiuni,created) VALUES (?,?,?)")
+           ->execute([$nume, json_encode(dz_optiuni_norm(dz_optiuni($d)), JSON_UNESCAPED_UNICODE), date('Y-m-d H:i:s')]);
+        header('Location: /crm/deviz.php?a=edit&id=' . $id . '&ok=sablon');
         exit;
     }
 
@@ -332,7 +455,7 @@ function dz_bifa($eticheta, $nume, $on, $id = '', $extra = '') {
 }
 
 /* masuratorile + optiunile, folosite si la deviz nou si la recalculare */
-function dz_form_dimensiuni($m, $o) {
+function dz_form_dimensiuni($m, $o, $sabloane = []) {
     $mod = $m['mod'];
     $mp_on = ($mod === 'mp');
     ?>
@@ -373,6 +496,22 @@ function dz_form_dimensiuni($m, $o) {
       <p class="muted" id="dz-sum" style="margin-top:10px"></p>
     </div>
 
+    <?php if ($sabloane) { ?>
+    <div style="margin-top:22px;background:#f9fafb;border:1px solid #e4e4e8;border-radius:10px;padding:14px 16px">
+      <label class="fl" style="margin-top:0">Pornește de la un șablon</label>
+      <div class="inline" style="flex-wrap:wrap">
+        <select onchange="dzSablon(this)" style="flex:1;min-width:220px;max-width:340px">
+          <option value="">Alege un șablon</option>
+          <?php foreach ($sabloane as $s) { ?>
+            <option value="<?php echo (int)$s['id']; ?>"><?php echo crm_h($s['nume']); ?></option>
+          <?php } ?>
+        </select>
+        <a class="btn ghost sm" href="/crm/deviz.php?a=sabloane">Vezi șabloanele</a>
+      </div>
+      <p class="muted" style="margin:8px 0 0">Bifele și selectoarele de mai jos se completează singure. Le poți schimba oricând după aceea.</p>
+    </div>
+    <?php } ?>
+
     <h3 style="margin-top:24px">Pereți</h3>
     <div class="opt">
       <?php
@@ -404,8 +543,28 @@ function dz_form_dimensiuni($m, $o) {
     <?php
 }
 
-function dz_form_js() { ?>
+function dz_form_js($sabloane = []) { ?>
 <script>
+var DZ_SABLOANE = <?php echo json_encode((object)dz_sabloane_map($sabloane), JSON_UNESCAPED_UNICODE); ?>;
+var DZ_BIFE  = <?php echo json_encode(DZ_OPT_BIFE); ?>;
+var DZ_LISTE = <?php echo json_encode(DZ_OPT_LISTE); ?>;
+function dzSablon(sel){
+  var o = DZ_SABLOANE[sel.value];
+  if (!o) return;
+  var f = sel.form || document;
+  var i, el;
+  for (i = 0; i < DZ_BIFE.length; i++){
+    el = f.querySelector('input[type=checkbox][name="' + DZ_BIFE[i] + '"]');
+    if (!el) continue;
+    el.checked = Number(o[DZ_BIFE[i]]) === 1;
+    if (el.parentNode) el.parentNode.className = el.checked ? 'on' : '';
+  }
+  for (i = 0; i < DZ_LISTE.length; i++){
+    el = f.querySelector('select[name="' + DZ_LISTE[i] + '"]');
+    if (el) el.value = String(o[DZ_LISTE[i]]);
+  }
+  dzPlasa();
+}
 function dzMod(m){
   document.getElementById('dz-mod').value = m;
   document.getElementById('box-mp').style.display  = (m === 'mp') ? '' : 'none';
@@ -808,6 +967,98 @@ if ($a === '__print_vechi') {
     exit;
 }
 
+/* ---------------------------- ȘABLOANE ---------------------------- */
+if ($a === 'sabloane') {
+    $rows = $db->query("SELECT * FROM deviz_preset ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
+    $ok = isset($_GET['ok']) ? (string)$_GET['ok'] : '';
+    crm_head('deviz', 'Șabloane de lucrare');
+    echo '<a class="back" href="/crm/deviz.php">← Toate devizele</a>';
+    if ($ok === 'sters') echo '<div class="msg ok">Șablonul a fost șters.</div>';
+    ?>
+    <div class="an-top">
+      <h1>Șabloane de lucrare</h1>
+      <div class="dfilt">
+        <a class="btn ghost" href="/crm/deviz.php?a=etape">Etape proprii</a>
+        <a class="btn" href="/crm/deviz.php?a=nou">Deviz nou</a>
+      </div>
+    </div>
+    <p class="muted">Un șablon ține minte bifele și selectoarele de la măsurători. La un deviz nou îl alegi din listă și formularul se completează singur. Un șablon nou se face din fișa unui deviz, cu „Salvează opțiunile ca șablon”.</p>
+
+    <?php if (!$rows) { ?>
+      <div class="empty">Niciun șablon salvat.</div>
+    <?php } else {
+      foreach ($rows as $r) {
+        $so  = dz_optiuni_norm(dz_json($r['optiuni']));
+        $txt = dz_text_optiuni($so); ?>
+        <div class="card">
+          <div class="an-top" style="margin-bottom:6px">
+            <h3 style="margin:0"><?php echo crm_h($r['nume']); ?></h3>
+            <form method="post" action="/crm/deviz.php">
+              <input type="hidden" name="act" value="preset_del">
+              <input type="hidden" name="pid" value="<?php echo (int)$r['id']; ?>">
+              <button class="btn del sm" type="submit" onclick="return confirm('Șterg șablonul?')">Șterge</button>
+            </form>
+          </div>
+          <table class="kv">
+            <tr><td class="k">Pereți</td><td><?php echo crm_h($txt['pereti']); ?></td></tr>
+            <tr><td class="k">Tavane</td><td><?php echo crm_h($txt['tavane']); ?></td></tr>
+          </table>
+        </div>
+      <?php }
+    }
+    crm_foot();
+    exit;
+}
+
+/* ---------------------------- ETAPE PROPRII ---------------------------- */
+if ($a === 'etape') {
+    $rows = dz_etape_proprii($db);
+    $ok = isset($_GET['ok']) ? (string)$_GET['ok'] : '';
+    crm_head('deviz', 'Etape proprii');
+    echo '<a class="back" href="/crm/deviz.php">← Toate devizele</a>';
+    if ($ok === 'salvat') echo '<div class="msg ok">Prețurile au fost salvate.</div>';
+    if ($ok === 'stersa') echo '<div class="msg ok">Etapa a fost ștearsă.</div>';
+    ?>
+    <div class="an-top">
+      <h1>Etape proprii</h1>
+      <div class="dfilt">
+        <a class="btn ghost" href="/crm/deviz.php?a=sabloane">Șabloane</a>
+        <a class="btn" href="/crm/deviz.php?a=nou">Deviz nou</a>
+      </div>
+    </div>
+    <p class="muted">Lucrările care nu ies din motorul de calcul: le adaugi o dată într-un deviz, cu bifa „Salvează și pentru alte devize”, și pe urmă le pui în orice deviz dintr-o listă. Prețul materialului se socotește pe unitatea de lucrare; lasă-l 0 dacă etapa e numai manoperă.</p>
+
+    <?php if (!$rows) { ?>
+      <div class="empty">Nicio etapă salvată încă.</div>
+    <?php } else { ?>
+    <div class="card">
+      <form method="post" action="/crm/deviz.php">
+        <input type="hidden" name="act" value="etape">
+        <div style="overflow-x:auto">
+        <table class="dz">
+          <tr>
+            <th>Etapă</th><th>Grup</th><th>U.M.</th><th class="n">Preț manoperă</th><th class="n">Preț material</th><th></th>
+          </tr>
+          <?php foreach ($rows as $e) { $eid = (int)$e['id']; ?>
+            <tr>
+              <td><?php echo crm_h($e['nume']); ?></td>
+              <td><?php echo crm_h($e['grup']); ?></td>
+              <td><?php echo crm_h($e['um']); ?></td>
+              <td class="n"><input type="text" name="e_pret[<?php echo $eid; ?>]" value="<?php echo crm_h(dz_inp($e['pret'])); ?>" style="text-align:right;max-width:110px"></td>
+              <td class="n"><input type="text" name="e_mat[<?php echo $eid; ?>]" value="<?php echo crm_h(dz_inp($e['material_pret'])); ?>" style="text-align:right;max-width:110px"></td>
+              <td class="n"><button class="btn del sm" type="submit" name="sterge_etapa" value="<?php echo $eid; ?>" onclick="return confirm('Șterg etapa din listă?')">x</button></td>
+            </tr>
+          <?php } ?>
+        </table>
+        </div>
+        <button class="btn" type="submit" style="margin-top:16px">Salvează prețurile</button>
+      </form>
+    </div>
+    <?php }
+    crm_foot();
+    exit;
+}
+
 /* ---------------------------- NOU ---------------------------- */
 if ($a === 'nou') {
     $lead = null;
@@ -820,6 +1071,7 @@ if ($a === 'nou') {
     if (!$lead) $lead_id = 0;
     $m = ['mod' => 'mp', 'pereti' => 0, 'tavane' => 0, 'camere' => []];
     $o = array_merge(deviz_optiuni_implicite(), ['tavan_decopertare' => 0]);
+    $sabloane = dz_sabloane($db);
 
     crm_head('deviz', 'Deviz nou');
     echo '<a class="back" href="/crm/deviz.php">← Toate devizele</a>';
@@ -857,13 +1109,13 @@ if ($a === 'nou') {
 
       <div class="card">
         <h3>Măsurători</h3>
-        <?php dz_form_dimensiuni($m, $o); ?>
+        <?php dz_form_dimensiuni($m, $o, $sabloane); ?>
       </div>
 
       <button class="btn full" type="submit">Creează devizul</button>
     </form>
     <?php
-    dz_form_js();
+    dz_form_js($sabloane);
     crm_foot();
     exit;
 }
@@ -877,6 +1129,8 @@ if ($a === 'edit') {
     $tot    = deviz_totaluri($linii);
     $m      = dz_masuratori($d);
     $o      = dz_optiuni($d);
+    $sabloane = dz_sabloane($db);
+    $etape_proprii = dz_etape_proprii($db);
     $lead   = null;
     if (!empty($d['lead_id'])) {
         $q = $db->prepare("SELECT id, nume, telefon FROM leads WHERE id=?");
@@ -892,6 +1146,7 @@ if ($a === 'edit') {
         'adaugat' => 'Etapa a fost adăugată.',
         'stersa'  => 'Etapa a fost ștearsă.',
         'nota'    => 'Nota a fost salvată.',
+        'sablon'  => 'Șablonul a fost salvat.',
     ];
     $ok = isset($_GET['ok']) ? (string)$_GET['ok'] : '';
 
@@ -952,9 +1207,20 @@ if ($a === 'edit') {
       <form method="post" action="/crm/deviz.php">
         <input type="hidden" name="act" value="recalc">
         <input type="hidden" name="id" value="<?php echo $id; ?>">
-        <?php dz_form_dimensiuni($m, $o); ?>
+        <?php dz_form_dimensiuni($m, $o, $sabloane); ?>
         <div class="msg warn" style="margin-top:18px">Recalcularea șterge liniile generate automat și le face din nou. Liniile adăugate manual și prețurile schimbate de tine rămân pe loc.</div>
         <button class="btn" type="submit" onclick="return confirm('Refac liniile automate din opțiuni. Continui?')">Recalculează din opțiuni</button>
+      </form>
+
+      <form method="post" action="/crm/deviz.php" style="margin-top:20px;border-top:1px solid #eef0f2;padding-top:16px">
+        <input type="hidden" name="act" value="preset_save">
+        <input type="hidden" name="id" value="<?php echo $id; ?>">
+        <label class="fl" style="margin-top:0">Salvează opțiunile ca șablon</label>
+        <div class="inline" style="max-width:560px;flex-wrap:wrap">
+          <input type="text" name="sablon_nume" maxlength="60" placeholder="ex. Apartament 2 camere, glet complet" style="min-width:200px">
+          <button class="btn ghost sm" type="submit">Salvează șablonul</button>
+        </div>
+        <p class="muted" style="margin:8px 0 0">Se salvează opțiunile cu care e făcut devizul acum, așa cum au fost recalculate ultima dată.</p>
       </form>
     </div>
 
@@ -1039,8 +1305,31 @@ if ($a === 'edit') {
           dz_camp('Preț pe u.m. (lei)', 'm_pret', '', 'text', 'ex. 18');
           ?>
         </div>
+        <div class="opt">
+          <label><input type="checkbox" name="m_save" value="1" onchange="dzOpt(this)"> Salvează și pentru alte devize</label>
+        </div>
         <button class="btn sm" type="submit" style="margin-top:14px">Adaugă etapa</button>
       </form>
+
+      <?php if ($etape_proprii) { ?>
+      <form method="post" action="/crm/deviz.php" style="margin-top:20px;border-top:1px solid #eef0f2;padding-top:16px">
+        <input type="hidden" name="act" value="adauga_custom">
+        <input type="hidden" name="id" value="<?php echo $id; ?>">
+        <label class="fl" style="margin-top:0">Etape proprii, salvate mai demult</label>
+        <div class="inline" style="flex-wrap:wrap">
+          <select name="etapa_id" style="flex:1;min-width:240px">
+            <?php foreach ($etape_proprii as $e) { ?>
+              <option value="<?php echo (int)$e['id']; ?>"><?php echo crm_h($e['nume'] . ' · ' . $e['grup'] . ' · ' . deviz_nr($e['pret']) . ' lei/' . $e['um']); ?></option>
+            <?php } ?>
+          </select>
+          <input type="text" name="e_cant" placeholder="Cantitate" style="flex:0 0 130px;max-width:130px">
+          <button class="btn ghost sm" type="submit">Adaugă din listă</button>
+        </div>
+        <p class="muted" style="margin:8px 0 0">Linia intră în deviz cu prețul salvat. <a href="/crm/deviz.php?a=etape" style="color:#ec5e0c;font-weight:600">Vezi etapele proprii</a></p>
+      </form>
+      <?php } else { ?>
+      <p class="muted" style="margin-top:20px;border-top:1px solid #eef0f2;padding-top:16px">Nu ai încă etape salvate. Bifează „Salvează și pentru alte devize” ca să le găsești aici data viitoare.</p>
+      <?php } ?>
     </div>
 
     <div class="card">
@@ -1061,7 +1350,7 @@ if ($a === 'edit') {
       </form>
     </div>
     <?php
-    dz_form_js();
+    dz_form_js($sabloane);
     crm_foot();
     exit;
 }
@@ -1090,7 +1379,11 @@ crm_head('deviz', 'Devize');
 ?>
 <div class="an-top">
   <h1>Devize</h1>
-  <a class="btn" href="/crm/deviz.php?a=nou">Deviz nou</a>
+  <div class="dfilt">
+    <a class="btn ghost" href="/crm/deviz.php?a=sabloane">Șabloane</a>
+    <a class="btn ghost" href="/crm/deviz.php?a=etape">Etape proprii</a>
+    <a class="btn" href="/crm/deviz.php?a=nou">Deviz nou</a>
+  </div>
 </div>
 <?php if (isset($_GET['ok']) && $_GET['ok'] === 'sters') echo '<div class="msg ok">Devizul a fost șters.</div>'; ?>
 <div class="tabs">
