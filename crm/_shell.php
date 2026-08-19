@@ -23,6 +23,8 @@ function crm_require_login() {
 const CRM_STATUSES = ['Nou', 'Contactat', 'Ofertat', 'Câștigat', 'Pierdut'];
 const CRM_INTERES  = ['Interesat', 'Vrea doar un preț', 'Neinteresat'];
 const CRM_MOTIVE   = ['Preț prea mare', 'A ales altă firmă', 'A amânat lucrarea', 'Nu răspunde', 'Nu era în zonă', 'Alt motiv'];
+// optiunile de deviz, identice cu cele din formularul public de pe site
+const CRM_DEVIZ = ['Deviz orientativ (gratuit)', 'Deviz exact (cu plata, 200 lei)', 'Nu vrea deviz'];
 const CRM_SURSE_OFFLINE = ['Recomandare', 'Telefon', 'WhatsApp', 'Facebook', 'OLX / Publi24', 'Client vechi', 'Flyer', 'Altă sursă'];
 
 function crm_nav_items() {

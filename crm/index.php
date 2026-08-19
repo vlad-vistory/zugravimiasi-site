@@ -78,6 +78,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $adresa = trim((string)($_POST['adresa'] ?? ''));
         $mesaj  = trim((string)($_POST['mesaj'] ?? ''));
         $snote  = trim((string)($_POST['source_note'] ?? ''));
+        $devizc = trim((string)($_POST['deviz'] ?? ''));
+        if ($devizc !== '' && !in_array($devizc, CRM_DEVIZ, true)) $devizc = '';
         $sursa  = (string)($_POST['sursa'] ?? '');
         if (!in_array($sursa, CRM_SURSE_OFFLINE, true)) $sursa = 'Altă sursă';
         $tip = (string)($_POST['tip_imobil'] ?? '');
@@ -89,8 +91,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($nume === '' && $tel === '') { header('Location: ?p=nou&e=1'); exit; }
         $ins = $db->prepare("INSERT INTO leads
             (created,session_id,nume,telefon,email,cand,deviz,mesaj,entry_page,submit_page,button,source,device,ip,status,value,trashed,channel,source_note,quote_price,oras,adresa,tip_imobil,suprafata)
-            VALUES (?,'',?,?,?,'','',?,'','','',?,'','',?,0,0,'offline',?,0,?,?,?,?)");
-        $ins->execute([$ACUM, $nume, $tel, $email, $mesaj, $sursa, $st, $snote, $oras, $adresa, $tip, $supr]);
+            VALUES (?,'',?,?,?,'',?,?,'','','',?,'','',?,0,0,'offline',?,0,?,?,?,?)");
+        $ins->execute([$ACUM, $nume, $tel, $email, $devizc, $mesaj, $sursa, $st, $snote, $oras, $adresa, $tip, $supr]);
         $nid = (int)$db->lastInsertId();
         // daca il treci direct peste "Nou", momentul contactului e chiar acum
         if ($st !== 'Nou') $db->prepare("UPDATE leads SET contacted_at=? WHERE id=?")->execute([$ACUM, $nid]);
@@ -117,6 +119,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (($_POST['act'] ?? '') === 'date_client') {
                 $tip = (string)($_POST['tip_imobil'] ?? '');
                 if ($tip !== '' && !in_array($tip, CRM_TIP_IMOBIL, true)) $tip = '';
+                $dvz = (string)($_POST['deviz'] ?? '');
+                if ($dvz !== '' && !in_array($dvz, CRM_DEVIZ, true)) $dvz = '';
                 $noi = [
                     'nume'       => trim((string)($_POST['nume'] ?? '')),
                     'telefon'    => trim((string)($_POST['telefon'] ?? '')),
@@ -125,12 +129,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'adresa'     => trim((string)($_POST['adresa'] ?? '')),
                     'tip_imobil' => $tip,
                     'suprafata'  => trim((string)($_POST['suprafata'] ?? '')),
+                    'deviz'      => $dvz,
                 ];
                 $schimbat = false;
                 foreach ($noi as $k => $vv) if ($vv !== trim((string)($lead[$k] ?? ''))) $schimbat = true;
                 if ($schimbat) {
-                    $db->prepare("UPDATE leads SET nume=?,telefon=?,email=?,oras=?,adresa=?,tip_imobil=?,suprafata=? WHERE id=?")
-                       ->execute([$noi['nume'], $noi['telefon'], $noi['email'], $noi['oras'], $noi['adresa'], $noi['tip_imobil'], $noi['suprafata'], $id]);
+                    $db->prepare("UPDATE leads SET nume=?,telefon=?,email=?,oras=?,adresa=?,tip_imobil=?,suprafata=?,deviz=? WHERE id=?")
+                       ->execute([$noi['nume'], $noi['telefon'], $noi['email'], $noi['oras'], $noi['adresa'], $noi['tip_imobil'], $noi['suprafata'], $noi['deviz'], $id]);
                     crm_note($db, $id, 'Datele clientului au fost actualizate.');
                 }
             }
@@ -540,6 +545,8 @@ elseif ($p === 'nou') {
     $g_status = $pre('status');
     if (!in_array($g_status, CRM_STATUSES, true)) $g_status = 'Nou';
     $g_supr = preg_replace('/[^0-9]/', '', $pre('suprafata'));
+    $g_deviz = $pre('deviz');
+    if ($g_deviz !== '' && !in_array($g_deviz, CRM_DEVIZ, true)) $g_deviz = '';
 
     echo '<a class="back" href="?p=palnie">← Înapoi la pâlnie</a>';
     if (isset($_GET['e'])) echo '<div class="msg warn">Scrie măcar numele sau numărul de telefon.</div>';
@@ -567,6 +574,11 @@ elseif ($p === 'nou') {
     echo '</div>';
 
     echo '<label class="fl">Ce lucrare dorește</label><textarea name="mesaj" style="min-height:90px" placeholder="Apartament 2 camere, zugrăvit complet, vrea în septembrie.">' . crm_h($pre('mesaj')) . '</textarea>';
+
+    echo '<label class="fl">Vrea deviz?</label><select name="deviz">';
+    echo '<option value=""' . ($g_deviz === '' ? ' selected' : '') . '>Nu s-a stabilit încă</option>';
+    foreach (CRM_DEVIZ as $dvopt) echo '<option' . ($g_deviz === $dvopt ? ' selected' : '') . '>' . crm_h($dvopt) . '</option>';
+    echo '</select>';
 
     echo '<div class="grid2">';
     echo '<div><label class="fl">De unde a venit</label><select name="sursa">';
@@ -668,6 +680,10 @@ elseif ($p === 'lead') {
         echo '</select></div>';
         echo '<div><label class="fl">Suprafață</label><div class="inline"><input type="text" name="suprafata" value="' . crm_h($r['suprafata']) . '"><span>mp</span></div></div>';
         echo '</div>';
+        echo '<label class="fl">Vrea deviz?</label><select name="deviz">';
+        echo '<option value=""' . (trim((string)$r['deviz']) === '' ? ' selected' : '') . '>Nu s-a stabilit încă</option>';
+        foreach (CRM_DEVIZ as $dvopt) echo '<option' . ($r['deviz'] === $dvopt ? ' selected' : '') . '>' . crm_h($dvopt) . '</option>';
+        echo '</select>';
         echo '<button class="btn full">Salvează datele</button></form></details>';
         echo '</div>';
 
